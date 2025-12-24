@@ -59,7 +59,8 @@ export default function Signup({ onNavigate }: { onNavigate?: (path: string) => 
           .eq('id', user.id)
         await handleReferral(user.id, refCode)
       }
-      toast.success('Check your email to complete sign up and verify your account')
+      toast.success('Registration successful')
+      onNavigate?.('/dashboard')
     })
   }
 
