@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { toast, Toaster } from 'sonner'
-import { getSupabase, awardReferralPoints } from '../lib/supabase'
+import { getSupabase } from '../lib/supabase'
 
 export default function Signup({ onNavigate }: { onNavigate?: (path: string) => void }) {
   const [email, setEmail] = useState('')
@@ -11,6 +11,28 @@ export default function Signup({ onNavigate }: { onNavigate?: (path: string) => 
   const [loading, setLoading] = useState(false)
   const [refCode, setRefCode] = useState('')
 
+  const handleReferral = async (newUserId: string, code: string) => {
+    if (!code) return
+    const client = getSupabase()
+    const { data: referrer } = await client
+      .from('profiles')
+      .select('id')
+      .eq('referral_code', code)
+      .maybeSingle()
+    if (!referrer || (referrer as any).id === newUserId) return
+    await (client.from('referrals') as any).insert({ referrer_id: (referrer as any).id, referred_id: newUserId })
+    const { data: existingPts } = await client
+      .from('points_transactions')
+      .select('id, metadata')
+      .eq('user_id', (referrer as any).id)
+      .eq('type', 'referral')
+      .eq('status', 'approved')
+    const alreadyAwarded = (existingPts ?? []).some((row: any) => row?.metadata?.referred_id === newUserId)
+    if (!alreadyAwarded) {
+      await (client.from('points_transactions') as any).insert({ user_id: (referrer as any).id, type: 'referral', points: 25, status: 'approved', metadata: { referred_id: newUserId } })
+    }
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (password !== confirmPassword) { toast.error('Passwords do not match'); return }
@@ -19,7 +41,6 @@ export default function Signup({ onNavigate }: { onNavigate?: (path: string) => 
       setLoading(false)
       if (error) { toast.error(error.message); return }
       const user = data.user
-      if (user && refCode) await awardReferralPoints(refCode, user.id)
       if (user) {
         const client = getSupabase()
         const uname = (user.email?.split('@')[0]) || 'user'
@@ -36,6 +57,7 @@ export default function Signup({ onNavigate }: { onNavigate?: (path: string) => 
         await (client.from('profiles') as any)
           .update(updateProfile)
           .eq('id', user.id)
+        await handleReferral(user.id, refCode)
       }
       toast.success('Check your email to complete sign up and verify your account')
     })

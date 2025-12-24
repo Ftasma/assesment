@@ -1,5 +1,6 @@
-import { Gift, UserPlus } from 'lucide-react'
+import { FileStack, Gift, UserPlus } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { toast, Toaster } from 'sonner'
 import { getSupabase, getSessionUser, getProfile, redeemReward } from '../../lib/supabase'
 
 export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => void }) {
@@ -16,6 +17,15 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
   const [claiming, setClaiming] = useState(false)
   const [loadingPage, setLoadingPage] = useState(true)
   const [loadingRewards, setLoadingRewards] = useState(true)
+  const [copied, setCopied] = useState(false)
+  const [referralCount, setReferralCount] = useState(0)
+  const [referralPoints, setReferralPoints] = useState(0)
+  const [showClaimModal, setShowClaimModal] = useState(false)
+  const [claimEmail, setClaimEmail] = useState('')
+  const [claimScreenshotUrl, setClaimScreenshotUrl] = useState('')
+  const [submittingClaim, setSubmittingClaim] = useState(false)
+  const [showDailySuccess, setShowDailySuccess] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
 
   const staticRewards: Array<{id:string,title:string,description:string,points_required:number,active:boolean}> = [
     { id:'r1', title:'$5 Bank Transfer', description:'The $5 equivalent will be transferred to your bank account.', points_required:5000, active:true },
@@ -37,12 +47,12 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
     if (user?.id) {
       const { data } = await getProfile(user.id)
       if (data) {
-        setPoints(data.points ?? 0)
         setReferralCode(data.referral_code ?? '')
       }
     }
     setRewards(staticRewards)
     await Promise.all([checkClaimed(), fetchPointsDirect(), fetchStreak()])
+    await fetchReferralStats()
     const elapsed = Date.now() - started
     if (elapsed < 500) await new Promise((r) => setTimeout(r, 500 - elapsed))
     setLoadingRewards(false)
@@ -54,7 +64,8 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
     const { data: auth } = await client.auth.getUser()
     const u = auth?.user
     if (!u) return
-    const today = new Date().toISOString().slice(0, 10)
+    const start = new Date(); start.setHours(0,0,0,0)
+    const today = start.toISOString()
     const { data } = await client
       .from('points_transactions')
       .select('id')
@@ -69,12 +80,14 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
     const { data: auth } = await client.auth.getUser()
     const u = auth?.user
     if (!u) return
-    const { data: profile } = await client
-      .from('profiles')
-      .select('points')
-      .eq('id', u.id)
-      .single()
-    if (profile) setPoints((profile as any).points)
+    const { data: txs } = await client
+      .from('points_transactions')
+      .select('points, status')
+      .eq('user_id', u.id)
+    const total = (txs ?? [])
+      .filter((t: any) => (t?.status ?? 'approved') === 'approved')
+      .reduce((sum: number, t: any) => sum + (t?.points ?? 0), 0)
+    setPoints(total)
   }
 
   const fetchStreak = async () => {
@@ -104,6 +117,26 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
     setStreakDays(count)
   }
 
+  const fetchReferralStats = async () => {
+    const client = getSupabase()
+    const { data: auth } = await client.auth.getUser()
+    const u = auth?.user
+    if (!u) return
+    const { count: rCount } = await client
+      .from('referrals')
+      .select('id', { count: 'exact', head: true })
+      .eq('referrer_id', u.id)
+    setReferralCount(rCount ?? 0)
+    const { data: ptsRows } = await client
+      .from('points_transactions')
+      .select('points')
+      .eq('user_id', u.id)
+      .eq('type', 'referral')
+      .eq('status', 'approved')
+    const total = (ptsRows ?? []).reduce((sum: number, row: any) => sum + (row?.points ?? 0), 0)
+    setReferralPoints(total)
+  }
+
   const claimDailyPointsLocal = async () => {
     if (hasClaimed || claiming) { setClaimMsg('Claimed today'); return }
     setClaiming(true)
@@ -111,7 +144,8 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
     const { data: auth } = await client.auth.getUser()
     const u = auth?.user
     if (!u) return
-    const today = new Date().toISOString().slice(0, 10)
+    const start = new Date(); start.setHours(0,0,0,0)
+    const today = start.toISOString()
     const { data: existing } = await client
       .from('points_transactions')
       .select('id')
@@ -123,11 +157,12 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
       .from('points_transactions')
       .insert({ user_id: u.id, type: 'daily_login', points: 5, status: 'approved' } as any)
     if (error) { setClaimMsg(error.message); return }
-    setPoints((p) => p + 5)
+    await fetchPointsDirect()
     setHasClaimed(true)
     setClaimMsg('Claimed +5 points')
     setStreakDays((s) => s + 1)
     setClaiming(false)
+    setShowDailySuccess(true)
   }
 
   useEffect(() => { refresh() }, [])
@@ -135,6 +170,7 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
   return (
     <div className="w-full bg-gray-50 px-[1rem] lg:px-[2rem] lg:pt-[2rem] min-h-screen flex-grow md:overflow-y-auto box-border lg:min-h-0">
       <div className="relative bg-gray-50">
+        <Toaster richColors position="top-center" />
         <div className="md:sticky md:top-0 md:z-10 bg-gray-50 pb-2 flex py-2 pt-3 lg:pt-0 lg:py-0">
           <div className="bg-gray-50 flex justify-between items-center w-full">
             <div className="flex items-center gap-3">
@@ -338,7 +374,7 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                                 <a href="https://reclaim.ai/?utm_campaign=partnerstack&utm_term=ps_16ee8d9da128&pscd=go.reclaim.ai&ps_partner_key=MTZlZThkOWRhMTI4&ps_xid=gwtUfnjenYrHZS&gsxid=gwtUfnjenYrHZS&gspk=MTZlZThkOWRhMTI4" target="_blank" rel="noopener noreferrer" className="bg-[#9013fe] hover:bg-[#8628da] text-white py-3 px-6 rounded-full font-semibold transition-all duration-200 flex items-center justify-center gap-2 border-0 text-xs">
                                  <UserPlus size={16}/> Sign up
                                 </a>
-                                <button className="bg-[linear-gradient(45deg,#9013FE,#FF8687)] text-white py-2 px-4 rounded-full font-semibold text-sm flex gap-1 items-center">
+                                <button onClick={()=>setShowClaimModal(true)} className="bg-[linear-gradient(45deg,#9013FE,#FF8687)] text-white py-2 px-4 rounded-full font-semibold text-sm flex gap-1 items-center">
                                   <Gift/> Claim 50 pts
                                 </button>
                               </div>
@@ -381,7 +417,7 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                                   <div>
                                     <p className="font-medium text-sm">Share your tool stack</p>
                                   </div>
-                                  <button className="bg-[#eef2ff] hover:text-white hover:bg-[#9013fe] text-[#9013fe] py-2 px-4 rounded-full font-semibold text-sm transition-all duration-200 inline-flex items-center gap-2 border-0">
+                                  <button onClick={()=>setShowShareModal(true)} className="bg-[#eef2ff] hover:text-white hover:bg-[#9013fe] text-[#9013fe] py-2 px-4 rounded-full font-semibold text-sm transition-all duration-200 inline-flex items-center gap-2 border-0">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-share-2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" x2="15.42" y1="13.51" y2="17.49"></line><line x1="15.41" x2="8.59" y1="6.51" y2="10.49"></line></svg>
                                     Share
                                   </button>
@@ -408,11 +444,11 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                               <div className="space-y-6">
                                 <div className="flex justify-between mb-[1rem]">
                                   <div className="text-center p-[0.5rem] flex-1">
-                                    <div className="text-[1.5rem] font-semibold text-[#9013fe]">0</div>
+                                    <div className="text-[1.5rem] font-semibold text-[#9013fe]">{referralCount}</div>
                                     <div className="text-gray-600">Referrals</div>
                                   </div>
                                   <div className="text-center p-[0.5rem] flex-1">
-                                    <div className="text-[1.5rem] font-semibold text-[#9013fe]">0</div>
+                                    <div className="text-[1.5rem] font-semibold text-[#9013fe]">{referralPoints}</div>
                                     <div className="text-gray-600">Points Earned</div>
                                   </div>
                                 </div>
@@ -420,7 +456,7 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                                   <p className="text-sm mb-2 text-gray-700">Your personal referral link:</p>
                                   <div className="relative">
                                     <input type="text" readOnly className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent w-full pr-10" value={referralCode ? `https://flowvatest.vercel.app/signup?ref=${referralCode}` : ''} />
-                                    <button className="absolute right-[10px] top-1/2 -translate-y-1/2 cursor-pointer z-10">
+                                    <button type="button" title={copied ? 'Copied!' : 'Copy'} onClick={() => { const link = referralCode ? `https://flowvatest.vercel.app/signup?ref=${referralCode}` : ''; if (!link) return; navigator.clipboard && navigator.clipboard.writeText(link); setCopied(true); toast.success('Referral link copied'); setTimeout(()=>setCopied(false), 1200) }} className="absolute right-[10px] top-1/2 -translate-y-1/2 cursor-pointer z-10">
                                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-copy text-[#9013fe]"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
                                     </button>
                                   </div>
@@ -454,16 +490,16 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                           <div className="ant-tabs-nav-wrap">
                             <div className="ant-tabs-nav-list">
                               <button className={`ant-tabs-tab px-3 ${redeemTab === 'all' ? 'py-2.5 border-b-2 border-[#9301fe] ant-tabs-tab-active text-[#9013fe] font-semibold bg-[#9031fe]/10' : 'py-2 text-[#2D3748] hover:text-[#9013fe]'} rounded-none text-sm`} onClick={() => setRedeemTab('all')}>
-                                <div className="flex items-center gap-1">All Rewards<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#9031fe]/10 text-[#9031fe] font-semibold">8</span></div>
+                                <div className="flex items-center gap-1">All Rewards<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#9031fe]/10 text-[#9031fe] font-semibold">{rewards.length}</span></div>
                               </button>
                               <button className={`ant-tabs-tab px-3 ${redeemTab === 'unlocked' ? 'py-2.5 border-b-2 border-[#9301fe] ant-tabs-tab-active text-[#9013fe] font-semibold bg-[#9031fe]/10' : 'py-2 text-[#2D3748] hover:text-[#9013fe]'} rounded-none text-sm`} onClick={() => setRedeemTab('unlocked')}>
-                                <div className="flex items-center gap-1">Unlocked<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#E2E8F0] text-[#CBD5E0]">0</span></div>
+                                <div className="flex items-center gap-1">Unlocked<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#E2E8F0] text-[#CBD5E0]">{rewards.filter(r=>r.active && points >= r.points_required).length}</span></div>
                               </button>
                               <button className={`ant-tabs-tab px-3 ${redeemTab === 'locked' ? 'py-2.5 border-b-2 border-[#9301fe] ant-tabs-tab-active text-[#9013fe] font-semibold bg-[#9031fe]/10' : 'py-2 text-[#2D3748] hover:text-[#9013fe]'} rounded-none text-sm`} onClick={() => setRedeemTab('locked')}>
-                                <div className="flex items-center gap-1">Locked<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#E2E8F0] text-[#CBD5E0]">7</span></div>
+                                <div className="flex items-center gap-1">Locked<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#E2E8F0] text-[#CBD5E0]">{rewards.filter(r=>r.active && points < r.points_required).length}</span></div>
                               </button>
                               <button className={`ant-tabs-tab px-3 ${redeemTab === 'coming' ? 'py-2.5 border-b-2 border-[#9301fe] ant-tabs-tab-active text-[#9013fe] font-semibold bg-[#9031fe]/10' : 'py-2 text-[#2D3748] hover:text-[#9013fe]'} rounded-none text-sm`} onClick={() => setRedeemTab('coming')}>
-                                <div className="flex items-center gap-1">Coming Soon<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#E2E8F0] text-[#CBD5E0]">1</span></div>
+                                <div className="flex items-center gap-1">Coming Soon<span className="ml-2 text-xs rounded-full h-5 px-2 inline-flex justify-center items-center bg-[#E2E8F0] text-[#CBD5E0]">{rewards.filter(r=>!r.active).length}</span></div>
                               </button>
                             </div>
                           </div>
@@ -481,14 +517,22 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                             </div>
                           ))
                         ) : (
-                          rewards.map((r) => (
-                            <div key={r.id} className="border border-[#E9D4FF] bg-white rounded-[12px] p-[1.5rem] shadow-[0_2px_8px_rgba(0,0,0,0.05)] relative overflow-hidden transition-all duration-200 ease-linear hover:translate-y-[-5px] hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]">
-                              <div className="w-[48px] h-[48px] rounded-[12px] flex items-center justify-center m-[0_auto_1rem] text-[1.5rem] text-[#9013fe] bg-[#E9D4FF]">🎁</div>
-                              <h4 className="text-center text-[1.1rem] font-semibold mb-2">{r.title}</h4>
-                              <p className="text-center text-[0.9rem] text-[#2D3748] mb-4">{r.description ?? ''}</p>
-                              <div className="flex items-center justify-center text-[#9013fe] font-semibold mb-4">⭐ {r.points_required} pts</div>
-                              <button disabled={!userId || points < r.points_required} onClick={async()=>{ if(!userId) return; const { error } = await redeemReward(userId, r.id, r.points_required); if(!error) refresh() }} className="w-full font-semibold p-[0.75rem] rounded-[8px] transition-all duration-300 ease-in-out bg-[#9013fe] text-white disabled:bg-[#d7e0ed]">{points >= r.points_required ? 'Redeem' : 'Locked'}</button>
-                            </div>
+                          rewards
+                            .filter(r => {
+                              if (redeemTab === 'all') return true
+                              if (redeemTab === 'unlocked') return r.active && points >= r.points_required
+                              if (redeemTab === 'locked') return r.active && points < r.points_required
+                              if (redeemTab === 'coming') return !r.active
+                              return true
+                            })
+                            .map((r) => (
+                              <div key={r.id} className="border border-[#E9D4FF] bg-white rounded-[12px] p-[1.5rem] shadow-[0_2px_8px_rgba(0,0,0,0.05)] relative overflow-hidden transition-all duration-200 ease-linear hover:translate-y-[-5px] hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]">
+                                <div className="w-[48px] h-[48px] rounded-[12px] flex items-center justify-center m-[0_auto_1rem] text-[1.5rem] text-[#9013fe] bg-[#E9D4FF]">🎁</div>
+                                <h4 className="text-center text-[1.1rem] font-semibold mb-2">{r.title}</h4>
+                                <p className="text-center text-[0.9rem] text-[#2D3748] mb-4">{r.description ?? ''}</p>
+                                <div className="flex items-center justify-center text-[#9013fe] font-semibold mb-4">⭐ {r.points_required} pts</div>
+                                <button disabled={!userId || points < r.points_required} onClick={async()=>{ if(!userId) return; const { error } = await redeemReward(userId, r.id, r.points_required); if(!error) refresh() }} className="w-full font-semibold p-[0.75rem] rounded-[8px] transition-all duration-300 ease-in-out bg-[#9013fe] text-white disabled:bg-[#d7e0ed]">{points >= r.points_required ? 'Redeem' : 'Locked'}</button>
+                              </div>
                           ))
                         )}
                       </div>
@@ -500,6 +544,64 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
           </div>
         </div>
       </div>
+      {showClaimModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={()=>setShowClaimModal(false)}></div>
+          <div className="relative bg-white rounded-xl shadow-xl w-[90%] max-w-[520px] p-5">
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-semibold">Claim Your 25 Points</h3>
+              <button className="text-gray-500" onClick={()=>setShowClaimModal(false)}>✕</button>
+            </div>
+            <div className="text-sm text-gray-700 space-y-2 mb-4">
+              <p>1. Sign up for Reclaim (free), then fill the form below</p>
+              <p>2. Enter your Reclaim sign-up email</p>
+              <p>3. Upload a screenshot URL showing your Reclaim profile and email</p>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Email used on Reclaim</label>
+                <input value={claimEmail} onChange={(e)=>setClaimEmail(e.target.value)} type="email" placeholder="user@example.com" className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Upload screenshot URL (mandatory)</label>
+                <input value={claimScreenshotUrl} onChange={(e)=>setClaimScreenshotUrl(e.target.value)} type="url" placeholder="https://..." className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-5">
+              <button className="px-4 py-2 rounded-md bg-gray-200 text-gray-800" onClick={()=>setShowClaimModal(false)}>Cancel</button>
+              <button disabled={submittingClaim || !claimEmail || !claimScreenshotUrl} onClick={async()=>{ if (!userId) { toast.error('Login required'); return } setSubmittingClaim(true); const { error } = await getSupabase().from('external_signups').insert({ user_id: userId, email_used: claimEmail, screenshot_url: claimScreenshotUrl, status: 'pending' } as any); setSubmittingClaim(false); if (error) { toast.error(error.message) } else { toast.success('Submitted for review'); setShowClaimModal(false); setClaimEmail(''); setClaimScreenshotUrl('') } }} className="px-4 py-2 rounded-md bg-[#9013fe] text-white disabled:bg-gray-300">{submittingClaim ? 'Submitting...' : 'Submit Claim'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showDailySuccess && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={()=>setShowDailySuccess(false)}></div>
+          <div className="relative bg-white rounded-xl shadow-xl md:w-[25%] w-[75%] px-9 max-w-[480px] p-6 text-center">
+            <button className="absolute top-3 right-3 text-gray-500" onClick={()=>setShowDailySuccess(false)}>✕</button>
+            <div className="mx-auto mb-4 w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4 12 14.01l-3-3"/></svg>
+            </div>
+            <h3 className="text-xl font-bold mb-1">Level Up!</h3>
+            <div className="text-2xl font-extrabold text-[#9013fe] mb-2">+5 Points</div>
+            <p className="text-sm text-gray-600">You've claimed your daily points! Come back tomorrow for more.</p>
+          </div>
+        </div>
+      )}
+      {showShareModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={()=>setShowShareModal(false)}></div>
+          <div className="relative bg-white rounded-xl shadow-xl md:w-[25%] w-[75%] max-w-[520px] p-6 text-center">
+            <button className="absolute top-3 right-3 text-gray-500" onClick={()=>setShowShareModal(false)}>✕</button>
+            <h3 className="text-2xl font-bold mb-3">Share Your Stack</h3>
+            <div className="mx-auto mb-4 w-14 h-14 rounded-full bg-[#9013fe]/10 flex items-center justify-center">
+              {/* <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#9013fe" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></svg> */}
+              <FileStack className='text-[#9013fe]'/>
+            </div>
+            <p className="text-sm text-gray-600">You have no stack created yet, go to Tech Stack to create one.</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

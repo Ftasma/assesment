@@ -63,17 +63,34 @@ export default function Dashboard({ section = 'rewards' }: Props) {
             <div className="p-3 border-b">
               <div className="h-[40px] w-[100px] rounded-md bg-[#E9D4FF] text-[#9013FE] font-bold text-sm flex items-center justify-center">Flowva</div>
             </div>
-            <nav className="flex-grow px-3 py-2">
-              <ul>
-                {nav.map(item => (
-                  <li key={item.key} className={`flex items-center gap-2 px-3 py-2 mb-[7px] rounded-[8px] cursor-pointer duration-200 transition-all text-sm ${isActive(item.key)}`} onClick={() => { history.pushState({}, '', `/dashboard/${item.key}`); setMobileOpen(false) }}>
-                    {item.icon}
-                    <span className="tracking-wide truncate">{item.label}</span>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-          </aside>
+          <nav className="flex-grow px-3 py-2">
+            <ul>
+              {nav.map(item => (
+                <li key={item.key} className={`flex items-center gap-2 px-3 py-2 mb-[7px] rounded-[8px] cursor-pointer duration-200 transition-all text-sm ${isActive(item.key)}`} onClick={() => { history.pushState({}, '', `/dashboard/${item.key}`); setMobileOpen(false) }}>
+                  {item.icon}
+                  <span className="tracking-wide truncate">{item.label}</span>
+                </li>
+              ))}
+            </ul>
+          </nav>
+          <div className="mt-auto py-3 relative flex justify-center">
+            <div className="absolute top-0 left-4 right-4 border-t border-[#64748B]"></div>
+            <div className="w-full flex items-center justify-between px-4 relative">
+              <button className="flex items-center border-none" onClick={() => setUserMenuOpen((v)=>!v)}>
+                <div className="w-[36px] h-[36px] relative overflow-hidden rounded-full font-semibold mr-[0.6rem] flex items-center justify-center text-[#9013FE] bg-[#E9D4FF]">{(userName || userEmail || 'F')[0]?.toUpperCase()}</div>
+                <div className="text-start">
+                  <span className="text-[0.9rem] font-semibold">{userName || 'User'}</span>
+                  <p className="text-[0.8rem] text-[#718096] truncate overflow-x-hidden max-w-[153px]">{userEmail || '—'}</p>
+                </div>
+              </button>
+              {userMenuOpen && (
+                <div className="absolute bottom-[60px] right-4 z-50 bg-white border border-[#00000014] rounded-md shadow-md p-2 min-w-[150px]">
+                  <button className="w-full text-left px-3 py-2 rounded hover:bg-[#F5F3FF]" onClick={async()=>{ await getSupabase().auth.signOut(); setUserMenuOpen(false); setMobileOpen(false); history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')); }}>Log out</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
         </>
       )}
       <aside className="hidden md:flex md:w-64 overflow-x-hidden flex-col h-screen shadow-md border-r border-black/10 text-black font-sans">
