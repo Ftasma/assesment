@@ -419,7 +419,7 @@ export default function RewardsHub({ onOpenSidebar }: { onOpenSidebar?: () => vo
                                 <div className="bg-purple-50 p-4 rounded-lg">
                                   <p className="text-sm mb-2 text-gray-700">Your personal referral link:</p>
                                   <div className="relative">
-                                    <input type="text" readOnly className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent w-full pr-10" value={referralCode ? `${window.location.origin}/?ref=${referralCode}` : ''} />
+                                    <input type="text" readOnly className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent w-full pr-10" value={referralCode ? `https://flowvatest.vercel.app/signup?ref=${referralCode}` : ''} />
                                     <button className="absolute right-[10px] top-1/2 -translate-y-1/2 cursor-pointer z-10">
                                       <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-copy text-[#9013fe]"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path></svg>
                                     </button>
